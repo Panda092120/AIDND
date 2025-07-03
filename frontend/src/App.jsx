@@ -1,12 +1,6 @@
 import React, { useState, useEffect } from 'react';
-import { Users, Dice6, Sword, Shield, User, Mail, Lock, Home, Plus, Play, LogOut } from 'lucide-react';
-
-// Mock data for development
-const mockCampaigns = [
-  { id: 1, title: "The Lost Mines of Phandelver", characterName: "Thorin Ironforge", lastPlayed: "2024-12-15" },
-  { id: 2, title: "Curse of Strahd", characterName: "Aria Moonwhisper", lastPlayed: "2024-12-10" },
-  { id: 3, title: "Storm King's Thunder", characterName: "Gareth the Bold", lastPlayed: "2024-12-08" }
-];
+import { Users, Dice6, Sword, Shield, User, Mail, Lock, Home, Plus, Play, LogOut, AlertCircle } from 'lucide-react';
+import { authAPI, campaignAPI, chatAPI, testAPI } from './services/api';
 
 // Character Sheet Component
 const CharacterSheet = ({ character, onUpdate, onComplete }) => {
@@ -264,6 +258,31 @@ const DiceRoller = ({ onRoll }) => {
   );
 };
 
+// Loading Component
+const LoadingSpinner = () => (
+  <div className="flex justify-center items-center p-8">
+    <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-indigo-600"></div>
+  </div>
+);
+
+// Error Component
+const ErrorMessage = ({ message, onRetry }) => (
+  <div className="bg-red-50 border border-red-200 rounded-lg p-4 m-4">
+    <div className="flex items-center">
+      <AlertCircle className="h-5 w-5 text-red-400 mr-2" />
+      <span className="text-red-800">{message}</span>
+    </div>
+    {onRetry && (
+      <button
+        onClick={onRetry}
+        className="mt-2 bg-red-600 text-white px-4 py-2 rounded text-sm hover:bg-red-700"
+      >
+        Try Again
+      </button>
+    )}
+  </div>
+);
+
 // Main App Component
 const DnDSimulator = () => {
   const [currentPage, setCurrentPage] = useState('home');
@@ -275,27 +294,88 @@ const DnDSimulator = () => {
   const [chatMessages, setChatMessages] = useState([]);
   const [userInput, setUserInput] = useState('');
   const [settingPreference, setSettingPreference] = useState('');
+  const [loading, setLoading] = useState(false);
+  const [error, setError] = useState('');
 
   // Authentication states
   const [loginData, setLoginData] = useState({ email: '', password: '' });
   const [signupData, setSignupData] = useState({ username: '', email: '', password: '', confirmPassword: '' });
 
-  // Mock authentication functions
-  const login = (credentials) => {
-    const mockUser = { id: 1, username: 'adventurer123', email: credentials.email };
-    setUser(mockUser);
-    setCampaigns(mockCampaigns);
-    setCurrentPage('home');
+  // Check if user is logged in on app start
+  useEffect(() => {
+    const checkAuth = async () => {
+      if (authAPI.isLoggedIn()) {
+        const storedUser = authAPI.getStoredUser();
+        if (storedUser) {
+          setUser(storedUser);
+          await loadCampaigns();
+        }
+      }
+    };
+    
+    checkAuth();
+  }, []);
+
+  // Test backend connection on startup
+  useEffect(() => {
+    const testConnection = async () => {
+      try {
+        await testAPI.testConnection();
+        console.log('✅ Backend connection successful');
+      } catch (error) {
+        console.error('❌ Backend connection failed:', error.message);
+        setError('Cannot connect to backend server. Make sure it\'s running on http://localhost:5000');
+      }
+    };
+    
+    testConnection();
+  }, []);
+
+  const loadCampaigns = async () => {
+    try {
+      setLoading(true);
+      const response = await campaignAPI.getCampaigns();
+      setCampaigns(response.campaigns || []);
+    } catch (error) {
+      console.error('Failed to load campaigns:', error);
+      setError('Failed to load campaigns: ' + error.message);
+    } finally {
+      setLoading(false);
+    }
   };
 
-  const signup = (userData) => {
-    const mockUser = { id: 1, username: userData.username, email: userData.email };
-    setUser(mockUser);
-    setCampaigns([]);
-    setCurrentPage('home');
+  const login = async (credentials) => {
+    try {
+      setLoading(true);
+      setError('');
+      const response = await authAPI.login(credentials);
+      setUser(response.user);
+      await loadCampaigns();
+      setCurrentPage('home');
+    } catch (error) {
+      setError('Login failed: ' + error.message);
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const signup = async (userData) => {
+    try {
+      setLoading(true);
+      setError('');
+      const response = await authAPI.signup(userData);
+      setUser(response.user);
+      setCampaigns([]);
+      setCurrentPage('home');
+    } catch (error) {
+      setError('Signup failed: ' + error.message);
+    } finally {
+      setLoading(false);
+    }
   };
 
   const logout = () => {
+    authAPI.logout();
     setUser(null);
     setCampaigns([]);
     setCurrentCampaign(null);
@@ -303,19 +383,31 @@ const DnDSimulator = () => {
     setCurrentPage('home');
   };
 
-  const startNewCampaign = () => {
-    setCurrentCampaign({ id: Date.now(), title: 'New Campaign' });
-    setCharacter(null);
-    setGameState('character-creation');
-    setChatMessages([]);
-    setCurrentPage('game');
+  const startNewCampaign = async () => {
+    try {
+      setLoading(true);
+      const response = await campaignAPI.createCampaign({
+        title: 'New Campaign',
+        setting_description: ''
+      });
+      setCurrentCampaign(response.campaign);
+      setCharacter(null);
+      setGameState('character-creation');
+      setChatMessages([]);
+      setCurrentPage('game');
+      await loadCampaigns(); // Refresh campaigns list
+    } catch (error) {
+      setError('Failed to create campaign: ' + error.message);
+    } finally {
+      setLoading(false);
+    }
   };
 
   const resumeCampaign = (campaign) => {
     setCurrentCampaign(campaign);
     setGameState('playing');
     setChatMessages([
-      { type: 'dm', content: `Welcome back to ${campaign.title}, ${campaign.characterName}!` }
+      { type: 'dm', content: `Welcome back to ${campaign.title}!` }
     ]);
     setCurrentPage('game');
   };
@@ -345,18 +437,39 @@ const DnDSimulator = () => {
     }
   };
 
-  const sendMessage = () => {
-    if (userInput.trim()) {
-      setChatMessages(prev => [...prev, 
-        { type: 'player', content: userInput },
-        { 
-          type: 'dm', 
-          content: `As the DM, I respond to your action: "${userInput}". The adventure continues...` 
-        }
-      ]);
+  const sendMessage = async () => {
+  if (userInput.trim()) {
+    try {
+      const userMessage = userInput;
       setUserInput('');
+      
+      // Add user message immediately
+      setChatMessages(prev => [...prev, { type: 'player', content: userMessage }]);
+      
+      // Send to AI DM with chat history for context
+      const response = await chatAPI.sendMessage(
+        userMessage, 
+        character, 
+        currentCampaign?.id, 
+        chatMessages // Send chat history for context
+      );
+      
+      // Add DM response
+      setChatMessages(prev => [...prev, { type: 'dm', content: response.response }]);
+      
+      // Show if using real AI
+      if (response.usingRealAI) {
+        console.log('🤖 Response generated by real OpenAI');
+      }
+    } catch (error) {
+      console.error('Failed to send message:', error);
+      setChatMessages(prev => [...prev, { 
+        type: 'system', 
+        content: `Failed to send message to DM: ${error.message}. Please try again.` 
+      }]);
     }
-  };
+  }
+};
 
   const handleDiceRoll = (rollResult) => {
     setChatMessages(prev => [...prev, {
@@ -364,6 +477,17 @@ const DnDSimulator = () => {
       content: `🎲 ${user?.username} rolled ${rollResult.numDice}${rollResult.diceType}${rollResult.modifier > 0 ? '+' : ''}${rollResult.modifier !== 0 ? rollResult.modifier : ''}: ${rollResult.total}`
     }]);
   };
+
+  const clearError = () => setError('');
+
+  // Render error if exists
+  if (error) {
+    return (
+      <div className="min-h-screen bg-gradient-to-br from-red-900 to-purple-900 flex items-center justify-center">
+        <ErrorMessage message={error} onRetry={clearError} />
+      </div>
+    );
+  }
 
   // Render different pages
   const renderPage = () => {
@@ -377,6 +501,8 @@ const DnDSimulator = () => {
                 Login
               </h2>
               
+              {error && <ErrorMessage message={error} />}
+              
               <div className="space-y-4">
                 <div>
                   <label className="block text-sm font-medium text-gray-700 mb-1">Email or Username</label>
@@ -388,6 +514,7 @@ const DnDSimulator = () => {
                       onChange={(e) => setLoginData({...loginData, email: e.target.value})}
                       className="w-full pl-10 pr-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
                       placeholder="Enter email or username"
+                      disabled={loading}
                     />
                   </div>
                 </div>
@@ -402,21 +529,24 @@ const DnDSimulator = () => {
                       onChange={(e) => setLoginData({...loginData, password: e.target.value})}
                       className="w-full pl-10 pr-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
                       placeholder="Enter password"
+                      disabled={loading}
                     />
                   </div>
                 </div>
                 
                 <button
                   onClick={() => login(loginData)}
-                  className="w-full bg-blue-600 text-white py-2 rounded-lg font-semibold hover:bg-blue-700 transition-colors"
+                  disabled={loading}
+                  className="w-full bg-blue-600 text-white py-2 rounded-lg font-semibold hover:bg-blue-700 disabled:bg-gray-400 transition-colors"
                 >
-                  Login
+                  {loading ? 'Logging in...' : 'Login'}
                 </button>
                 
                 <div className="text-center">
                   <button
-                    onClick={() => setCurrentPage('home')}
+                    onClick={() => { setCurrentPage('home'); setError(''); }}
                     className="text-blue-600 hover:text-blue-800 text-sm"
+                    disabled={loading}
                   >
                     Back to Home
                   </button>
@@ -435,6 +565,8 @@ const DnDSimulator = () => {
                 Sign Up
               </h2>
               
+              {error && <ErrorMessage message={error} />}
+              
               <div className="space-y-4">
                 <div>
                   <label className="block text-sm font-medium text-gray-700 mb-1">Username</label>
@@ -444,6 +576,7 @@ const DnDSimulator = () => {
                     onChange={(e) => setSignupData({...signupData, username: e.target.value})}
                     className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-green-500 focus:border-transparent"
                     placeholder="Choose a username"
+                    disabled={loading}
                   />
                 </div>
                 
@@ -455,6 +588,7 @@ const DnDSimulator = () => {
                     onChange={(e) => setSignupData({...signupData, email: e.target.value})}
                     className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-green-500 focus:border-transparent"
                     placeholder="Enter your email"
+                    disabled={loading}
                   />
                 </div>
                 
@@ -466,6 +600,7 @@ const DnDSimulator = () => {
                     onChange={(e) => setSignupData({...signupData, password: e.target.value})}
                     className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-green-500 focus:border-transparent"
                     placeholder="Create a password"
+                    disabled={loading}
                   />
                 </div>
                 
@@ -477,21 +612,23 @@ const DnDSimulator = () => {
                     onChange={(e) => setSignupData({...signupData, confirmPassword: e.target.value})}
                     className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-green-500 focus:border-transparent"
                     placeholder="Confirm your password"
+                    disabled={loading}
                   />
                 </div>
                 
                 <button
                   onClick={() => signup(signupData)}
-                  disabled={signupData.password !== signupData.confirmPassword || !signupData.username || !signupData.email}
+                  disabled={loading || signupData.password !== signupData.confirmPassword || !signupData.username || !signupData.email}
                   className="w-full bg-green-600 text-white py-2 rounded-lg font-semibold hover:bg-green-700 disabled:bg-gray-400 disabled:cursor-not-allowed transition-colors"
                 >
-                  Sign Up
+                  {loading ? 'Creating Account...' : 'Sign Up'}
                 </button>
                 
                 <div className="text-center">
                   <button
-                    onClick={() => setCurrentPage('home')}
+                    onClick={() => { setCurrentPage('home'); setError(''); }}
                     className="text-green-600 hover:text-green-800 text-sm"
+                    disabled={loading}
                   >
                     Back to Home
                   </button>
@@ -651,13 +788,13 @@ const DnDSimulator = () => {
                 <div className="text-center space-y-6">
                   <div className="space-x-4">
                     <button
-                      onClick={() => setCurrentPage('login')}
+                      onClick={() => { setCurrentPage('login'); setError(''); }}
                       className="bg-blue-600 hover:bg-blue-700 px-8 py-3 rounded-lg text-lg font-semibold transition-colors"
                     >
                       Login
                     </button>
                     <button
-                      onClick={() => setCurrentPage('signup')}
+                      onClick={() => { setCurrentPage('signup'); setError(''); }}
                       className="bg-green-600 hover:bg-green-700 px-8 py-3 rounded-lg text-lg font-semibold transition-colors"
                     >
                       Sign Up
@@ -666,6 +803,11 @@ const DnDSimulator = () => {
                   <p className="text-indigo-300">
                     Create an account to start your D&D adventures!
                   </p>
+                  <div className="mt-8 bg-indigo-800 p-4 rounded-lg max-w-md mx-auto">
+                    <h3 className="text-lg font-semibold mb-2">Test Credentials:</h3>
+                    <p className="text-sm text-indigo-200">Email: test@example.com</p>
+                    <p className="text-sm text-indigo-200">Password: password123</p>
+                  </div>
                 </div>
               ) : (
                 <div>
@@ -683,22 +825,25 @@ const DnDSimulator = () => {
                   <div className="mb-8">
                     <button
                       onClick={startNewCampaign}
-                      className="bg-emerald-600 hover:bg-emerald-700 px-6 py-3 rounded-lg text-lg font-semibold flex items-center transition-colors"
+                      disabled={loading}
+                      className="bg-emerald-600 hover:bg-emerald-700 px-6 py-3 rounded-lg text-lg font-semibold flex items-center transition-colors disabled:bg-gray-400"
                     >
                       <Plus className="w-5 h-5 mr-2" />
-                      Begin New Campaign
+                      {loading ? 'Creating...' : 'Begin New Campaign'}
                     </button>
                   </div>
 
-                  {campaigns.length > 0 ? (
+                  {loading ? (
+                    <LoadingSpinner />
+                  ) : campaigns.length > 0 ? (
                     <div>
                       <h3 className="text-2xl font-bold mb-6">Your Campaigns</h3>
                       <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
                         {campaigns.map((campaign) => (
                           <div key={campaign.id} className="bg-indigo-800 p-6 rounded-lg border border-indigo-600 hover:border-indigo-400 transition-colors">
                             <h4 className="text-xl font-semibold mb-2">{campaign.title}</h4>
-                            <p className="text-indigo-200 mb-2">Character: {campaign.characterName}</p>
-                            <p className="text-indigo-300 text-sm mb-4">Last played: {campaign.lastPlayed}</p>
+                            <p className="text-indigo-200 mb-2">Character: {campaign.character_name || 'No character yet'}</p>
+                            <p className="text-indigo-300 text-sm mb-4">Last played: {new Date(campaign.last_played).toLocaleDateString()}</p>
                             <button
                               onClick={() => resumeCampaign(campaign)}
                               className="bg-blue-600 hover:bg-blue-700 px-4 py-2 rounded flex items-center transition-colors"
